@@ -19,177 +19,161 @@ class UniProxyController extends Controller
     ) {
     }
 
-    // 后端获取用户
-    public function user(Request $request)
+    /**
+     * 生成缓存键
+     */
+    private function cacheKey(string $type, string $suffix, int $nodeId): string
     {
-        ini_set('memory_limit', -1);
+        return CacheKey::get('SERVER_' . strtoupper($type) . '_' . $suffix, $nodeId);
+    }
+
+    /**
+     * 生成带 ETag 的 JSON 响应
+     */
+    private function jsonResponseWithETag(Request $request, array $response): JsonResponse
+    {
+        $eTag = sha1(serialize($response));
+        if ($request->header('If-None-Match', '') === "\"{$eTag}\"") {
+            return response()->json(null, 304);
+        }
+        return response()->json($response)->header('ETag', "\"{$eTag}\"");
+    }
+
+    /**
+     * 获取可用用户列表
+     */
+    public function user(Request $request): JsonResponse
+    {
+        ini_set('memory_limit', '-1');
+
         $node = $request->input('node_info');
-        $nodeType = $node->type;
-        $nodeId = $node->id;
-        Cache::put(CacheKey::get('SERVER_' . strtoupper($nodeType) . '_LAST_CHECK_AT', $nodeId), time(), 3600);
+        if (!$node || !isset($node->type, $node->id, $node->group_ids)) {
+            return response()->json(['error' => 'Invalid node information'], 400);
+        }
+
+        Cache::put($this->cacheKey($node->type, 'LAST_CHECK_AT', $node->id), time(), 3600);
         $users = ServerService::getAvailableUsers($node->group_ids);
 
-        $response['users'] = $users;
-
-        $eTag = sha1(json_encode($response));
-        if (strpos($request->header('If-None-Match', ''), $eTag) !== false) {
-            return response(null, 304);
-        }
-
-        return response($response)->header('ETag', "\"{$eTag}\"");
+        return $this->jsonResponseWithETag($request, ['users' => $users]);
     }
 
-    // 后端提交数据
-    public function push(Request $request)
+    /**
+     * 推送流量数据
+     */
+    public function push(Request $request): JsonResponse
     {
-        $res = json_decode(request()->getContent(), true);
+        $res = json_decode($request->getContent(), true);
         if (!is_array($res)) {
-            return $this->fail([422, 'Invalid data format']);
+            return response()->json(['error' => 'Invalid data format'], 422);
         }
-        $data = array_filter($res, function ($item) {
-            return is_array($item)
-                && count($item) === 2
-                && is_numeric($item[0])
-                && is_numeric($item[1]);
-        });
+
+        // 过滤无效数据，只保留 [用户ID, 流量] 格式
+        $data = array_filter($res, fn($item) => is_array($item) && count($item) === 2 && is_numeric($item[0]) && is_numeric($item[1]));
+
         if (empty($data)) {
-            return $this->success(true);
+            return response()->json(['success' => true]);
         }
+
         $node = $request->input('node_info');
-        $nodeType = $node->type;
-        $nodeId = $node->id;
+        if (!$node || !isset($node->type, $node->id)) {
+            return response()->json(['error' => 'Invalid node information'], 400);
+        }
 
-        Cache::put(
-            CacheKey::get('SERVER_' . strtoupper($nodeType) . '_ONLINE_USER', $nodeId),
-            count($data),
-            3600
-        );
-        Cache::put(
-            CacheKey::get('SERVER_' . strtoupper($nodeType) . '_LAST_PUSH_AT', $nodeId),
-            time(),
-            3600
-        );
+        // 更新在线用户数和推送时间
+        Cache::put($this->cacheKey($node->type, 'ONLINE_USER', $node->id), count($data), 3600);
+        Cache::put($this->cacheKey($node->type, 'LAST_PUSH_AT', $node->id), time(), 3600);
 
-        $userService = new UserService();
-        $userService->trafficFetch($node->toArray(), $nodeType, $data);
-        return $this->success(true);
+        // 处理流量数据
+        (new UserService())->trafficFetch($node->toArray(), $node->type, $data);
+
+        return response()->json(['success' => true]);
     }
 
-    // 后端获取配置
-    public function config(Request $request)
+    /**
+     * 获取节点配置信息
+     */
+    public function config(Request $request): JsonResponse
     {
         $node = $request->input('node_info');
-        $nodeType = $node->type;
-        $protocolSettings = $node->protocol_settings;
+        if (!$node || !isset($node->type, $node->protocol_settings, $node->server_port, $node->host)) {
+            return response()->json(['error' => 'Invalid node information'], 400);
+        }
 
-        $serverPort = $node->server_port;
-        $host = $node->host;
-
+        // 基础配置信息
         $baseConfig = [
-            'server_port' => (int) $serverPort,
-            'network' => data_get($protocolSettings, 'network'),
-            'networkSettings' => data_get($protocolSettings, 'network_settings') ?: null,
+            'server_port' => (int) $node->server_port,
+            'network' => data_get($node->protocol_settings, 'network'),
+            'networkSettings' => data_get($node->protocol_settings, 'network_settings', null),
         ];
 
-        $response = match ($nodeType) {
-            'shadowsocks' => [
-                ...$baseConfig,
-                'cipher' => $protocolSettings['cipher'],
-                'obfs' => $protocolSettings['obfs'],
-                'obfs_settings' => $protocolSettings['obfs_settings'],
-                'server_key' => match ($protocolSettings['cipher']) {
-                        '2022-blake3-aes-128-gcm' => Helper::getServerKey($node->created_at, 16),
-                        '2022-blake3-aes-256-gcm' => Helper::getServerKey($node->created_at, 32),
-                        default => null
-                    }
-            ],
-            'vmess' => [
-                ...$baseConfig,
-                'tls' => (int) $protocolSettings['tls']
-            ],
-            'trojan' => [
-                ...$baseConfig,
-                'host' => $host,
-                'server_name' => $protocolSettings['server_name'],
-            ],
-            'vless' => [
-                ...$baseConfig,
-                'tls' => (int) $protocolSettings['tls'],
-                'flow' => $protocolSettings['flow'],
-                'tls_settings' =>
-                        match ((int) $protocolSettings['tls']) {
-                            2 => $protocolSettings['reality_settings'],
-                            default => $protocolSettings['tls_settings']
-                        }
-            ],
-            'hysteria' => [
-                'server_port' => (int) $serverPort,
-                'version' => (int) $protocolSettings['version'],
-                'host' => $host,
-                'server_name' => $protocolSettings['tls']['server_name'],
-                'up_mbps' => (int) $protocolSettings['bandwidth']['up'],
-                'down_mbps' => (int) $protocolSettings['bandwidth']['down'],
-                ...match ((int) $protocolSettings['version']) {
-                        1 => ['obfs' => $protocolSettings['obfs']['password'] ?? null],
-                        2 => [
-                            'obfs' => $protocolSettings['obfs']['open'] ? $protocolSettings['obfs']['type'] : null,
-                            'obfs-password' => $protocolSettings['obfs']['password'] ?? null
-                        ],
-                        default => []
-                    }
-            ],
-            'tuic' => [
-                'version' => (int) $protocolSettings['version'],
-                'server_port' => (int) $serverPort,
-                'server_name' => $protocolSettings['tls']['server_name'],
-                'congestion_control' => $protocolSettings['congestion_control'],
-                'auth_timeout' => '3s',
-                'zero_rtt_handshake' => false,
-                'heartbeat' => "3s",
-            ],
-            'socks' => [
-                'server_port' => (int) $serverPort,
-            ],
+        // 根据协议类型获取不同的配置信息
+        $response = match ($node->type) {
+            'shadowsocks' => $this->getShadowsocksConfig($node, $baseConfig),
+            'vmess' => [...$baseConfig, 'tls' => (int) $node->protocol_settings['tls']],
+            'trojan' => [...$baseConfig, 'host' => $node->host, 'server_name' => $node->protocol_settings['server_name']],
+            'vless' => [...$baseConfig, 'tls' => (int) $node->protocol_settings['tls'], 'flow' => $node->protocol_settings['flow']],
             default => []
         };
 
         $response['base_config'] = [
             'push_interval' => (int) admin_setting('server_push_interval', 60),
-            'pull_interval' => (int) admin_setting('server_pull_interval', 60)
+            'pull_interval' => (int) admin_setting('server_pull_interval', 60),
         ];
 
-        if (!empty($node['route_ids'])) {
-            $response['routes'] = ServerService::getRoutes($node['route_ids']);
+        if (!empty($node->route_ids)) {
+            $response['routes'] = ServerService::getRoutes($node->route_ids);
         }
 
-        $eTag = sha1(json_encode($response));
-        if (strpos($request->header('If-None-Match', '') ?? '', $eTag) !== false) {
-            return response(null, 304);
-        }
-        return response($response)->header('ETag', "\"{$eTag}\"");
+        return $this->jsonResponseWithETag($request, $response);
     }
 
-    // 获取在线用户数据（wyx2685
+    /**
+     * 获取 Shadowsocks 配置
+     */
+    private function getShadowsocksConfig(object $node, array $baseConfig): array
+    {
+        return [
+            ...$baseConfig,
+            'cipher' => $node->protocol_settings['cipher'],
+            'obfs' => $node->protocol_settings['obfs'],
+            'obfs_settings' => $node->protocol_settings['obfs_settings'],
+            'server_key' => match ($node->protocol_settings['cipher']) {
+                '2022-blake3-aes-128-gcm' => Helper::getServerKey($node->created_at, 16),
+                '2022-blake3-aes-256-gcm' => Helper::getServerKey($node->created_at, 32),
+                default => null,
+            }
+        ];
+    }
+
+    /**
+     * 获取在线用户列表
+     */
     public function alivelist(Request $request): JsonResponse
     {
         $node = $request->input('node_info');
-        $deviceLimitUsers = ServerService::getAvailableUsers($node->group_ids)
-            ->where('device_limit', '>', 0);
+        if (!$node || !isset($node->group_ids)) {
+            return response()->json(['error' => 'Invalid node information'], 400);
+        }
+
+        // 获取设备限制的用户，并查询在线用户列表
+        $deviceLimitUsers = ServerService::getAvailableUsers($node->group_ids)->where('device_limit', '>', 0);
         $alive = $this->userOnlineService->getAliveList($deviceLimitUsers);
+
         return response()->json(['alive' => (object) $alive]);
     }
 
-    // 后端提交在线数据
+    /**
+     * 更新在线用户状态
+     */
     public function alive(Request $request): JsonResponse
     {
         $node = $request->input('node_info');
-        $data = json_decode(request()->getContent(), true);
-        if ($data === null) {
-            return response()->json([
-                'error' => 'Invalid online data'
-            ], 400);
+        $data = json_decode($request->getContent(), true);
+        if (!$node || $data === null) {
+            return response()->json(['error' => 'Invalid online data'], 400);
         }
+
         $this->userOnlineService->updateAliveData($data, $node->type, $node->id);
-        return response()->json(['data' => true]);
+        return response()->json(['success' => true]);
     }
 }
