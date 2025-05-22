@@ -184,7 +184,24 @@ class AuthController extends Controller
             ], 403);
         }
 
-        $this->checkGoogleOauthConfig();
+        // 从 v2_settings 表读取 Google OAuth 配置
+        $clientId = admin_setting('google_client_id', '');
+        $clientSecret = admin_setting('google_client_secret', '');
+        $redirectUri = admin_setting('google_redirect_uri', 'http://your-app.com/passport/auth/google/callback');
+
+        // 检查配置是否完整
+        if (empty($clientId) || empty($clientSecret) || empty($redirectUri)) {
+            return response()->json([
+                'message' => __('Google OAuth configuration is incomplete. Please contact the administrator.')
+            ], 500);
+        }
+
+        // 动态设置 Socialite 配置
+        config(['services.google' => [
+            'client_id' => $clientId,
+            'client_secret' => $clientSecret,
+            'redirect' => $redirectUri,
+        ]]);
 
         return Socialite::driver('google')->redirect();
     }
@@ -200,7 +217,24 @@ class AuthController extends Controller
             ], 403);
         }
 
-        $this->checkGoogleOauthConfig();
+        // 从 v2_settings 表读取 Google OAuth 配置
+        $clientId = admin_setting('google_client_id', '');
+        $clientSecret = admin_setting('google_client_secret', '');
+        $redirectUri = admin_setting('google_redirect_uri', 'http://your-app.com/passport/auth/google/callback');
+
+        // 检查配置是否完整
+        if (empty($clientId) || empty($clientSecret) || empty($redirectUri)) {
+            return response()->json([
+                'message' => __('Google OAuth configuration is incomplete. Please contact the administrator.')
+            ], 500);
+        }
+
+        // 动态设置 Socialite 配置
+        config(['services.google' => [
+            'client_id' => $clientId,
+            'client_secret' => $clientSecret,
+            'redirect' => $redirectUri,
+        ]]);
 
         try {
             $googleUser = Socialite::driver('google')->user();
@@ -242,23 +276,6 @@ class AuthController extends Controller
             return response()->json([
                 'message' => __('Google login failed: :error', ['error' => $e->getMessage()])
             ], 400);
-        }
-    }
-
-    /**
-     * 检查 Google OAuth 配置是否完整
-     *
-     * @return void
-     * @throws \Illuminate\Http\JsonResponse
-     */
-    private function checkGoogleOauthConfig()
-    {
-        $clientId = admin_setting('google_client_id', '');
-        $clientSecret = admin_setting('google_client_secret', '');
-        if (empty($clientId) || empty($clientSecret)) {
-            throw new \Illuminate\Http\JsonResponse([
-                'message' => __('Google OAuth configuration is incomplete. Please contact the administrator.')
-            ], 500);
         }
     }
 }
