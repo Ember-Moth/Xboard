@@ -15,10 +15,13 @@ class PassportRoute
             // Auth
             $router->post('/auth/register', [AuthController::class, 'register']);
             $router->post('/auth/login', [AuthController::class, 'login']);
-            $router->get ('/auth/token2Login', [AuthController::class, 'token2Login']);
+            $router->get('/auth/token2Login', [AuthController::class, 'token2Login']);
             $router->post('/auth/forget', [AuthController::class, 'forget']);
             $router->post('/auth/getQuickLoginUrl', [AuthController::class, 'getQuickLoginUrl']);
             $router->post('/auth/loginWithMailLink', [AuthController::class, 'loginWithMailLink']);
+            // Google 登录路由
+            $router->get('/auth/google', [AuthController::class, 'redirectToGoogle']);
+            $router->get('/auth/google/callback', [AuthController::class, 'handleGoogleCallback']);
             // Comm
             $router->post('/comm/sendEmailVerify', [CommController::class, 'sendEmailVerify']);
             $router->post('/comm/pv', [CommController::class, 'pv']);

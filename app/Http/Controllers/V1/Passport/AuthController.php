@@ -184,6 +184,8 @@ class AuthController extends Controller
             ], 403);
         }
 
+        $this->checkGoogleOauthConfig();
+
         return Socialite::driver('google')->redirect();
     }
 
@@ -197,6 +199,8 @@ class AuthController extends Controller
                 'message' => __('Google login is disabled')
             ], 403);
         }
+
+        $this->checkGoogleOauthConfig();
 
         try {
             $googleUser = Socialite::driver('google')->user();
@@ -238,6 +242,23 @@ class AuthController extends Controller
             return response()->json([
                 'message' => __('Google login failed: :error', ['error' => $e->getMessage()])
             ], 400);
+        }
+    }
+
+    /**
+     * 检查 Google OAuth 配置是否完整
+     *
+     * @return void
+     * @throws \Illuminate\Http\JsonResponse
+     */
+    private function checkGoogleOauthConfig()
+    {
+        $clientId = admin_setting('google_client_id', '');
+        $clientSecret = admin_setting('google_client_secret', '');
+        if (empty($clientId) || empty($clientSecret)) {
+            throw new \Illuminate\Http\JsonResponse([
+                'message' => __('Google OAuth configuration is incomplete. Please contact the administrator.')
+            ], 500);
         }
     }
 }
