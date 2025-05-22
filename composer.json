@@ -22,6 +22,7 @@
         "laravel/octane": "^2.3",
         "laravel/prompts": "^0.1.13",
         "laravel/sanctum": "^4.0",
+        "laravel/socialite": "^5.20",
         "laravel/tinker": "^2.9",
         "linfo/linfo": "^4.0",
         "millat/laravel-hooks": "^1.4",

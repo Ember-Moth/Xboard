@@ -12,6 +12,8 @@ use App\Services\Auth\MailLinkService;
 use App\Services\Auth\RegisterService;
 use App\Services\AuthService;
 use Illuminate\Http\Request;
+use Laravel\Socialite\Facades\Socialite;
+use App\Models\User;
 
 class AuthController extends Controller
 {
@@ -40,7 +42,7 @@ class AuthController extends Controller
         ]);
 
         [$success, $result] = $this->mailLinkService->handleMailLink(
-            $params['email'], 
+            $params['email'],
             $request->input('redirect')
         );
 
@@ -89,10 +91,9 @@ class AuthController extends Controller
      */
     public function token2Login(Request $request)
     {
-        // 处理直接通过token重定向
         if ($token = $request->input('token')) {
             $redirect = '/#/login?verify=' . $token . '&redirect=' . ($request->input('redirect', 'dashboard'));
-            
+
             return redirect()->to(
                 admin_setting('app_url')
                     ? admin_setting('app_url') . $redirect
@@ -100,31 +101,30 @@ class AuthController extends Controller
             );
         }
 
-        // 处理通过验证码登录
         if ($verify = $request->input('verify')) {
             $userId = $this->mailLinkService->handleTokenLogin($verify);
-            
+
             if (!$userId) {
                 return response()->json([
                     'message' => __('Token error')
                 ], 400);
             }
-            
+
             $user = \App\Models\User::find($userId);
-            
+
             if (!$user) {
                 return response()->json([
                     'message' => __('User not found')
                 ], 400);
             }
-            
+
             $authService = new AuthService($user);
-            
+
             return response()->json([
                 'data' => $authService->generateAuthData()
             ]);
         }
-        
+
         return response()->json([
             'message' => __('Invalid request')
         ], 400);
@@ -136,7 +136,7 @@ class AuthController extends Controller
     public function getQuickLoginUrl(Request $request)
     {
         $authorization = $request->input('auth_data') ?? $request->header('authorization');
-        
+
         if (!$authorization) {
             return response()->json([
                 'message' => ResponseEnum::CLIENT_HTTP_UNAUTHORIZED
@@ -144,13 +144,13 @@ class AuthController extends Controller
         }
 
         $user = AuthService::findUserByBearerToken($authorization);
-        
+
         if (!$user) {
             return response()->json([
                 'message' => ResponseEnum::CLIENT_HTTP_UNAUTHORIZED_EXPIRED
             ], 401);
         }
-        
+
         $url = $this->mailLinkService->getQuickLoginUrl($user, $request->input('redirect'));
         return $this->success($url);
     }
@@ -171,5 +171,73 @@ class AuthController extends Controller
         }
 
         return $this->success(true);
+    }
+
+    /**
+     * 重定向到 Google 登录页面
+     */
+    public function redirectToGoogle()
+    {
+        if (!(int)admin_setting('google_login_enable', 0)) {
+            return response()->json([
+                'message' => __('Google login is disabled')
+            ], 403);
+        }
+
+        return Socialite::driver('google')->redirect();
+    }
+
+    /**
+     * 处理 Google 登录回调
+     */
+    public function handleGoogleCallback()
+    {
+        if (!(int)admin_setting('google_login_enable', 0)) {
+            return response()->json([
+                'message' => __('Google login is disabled')
+            ], 403);
+        }
+
+        try {
+            $googleUser = Socialite::driver('google')->user();
+            $user = User::where('google_id', $googleUser->id)->first();
+
+            if (!$user) {
+                $user = User::where('email', $googleUser->email)->first();
+
+                if ($user) {
+                    $user->google_id = $googleUser->id;
+                    $user->save();
+                } else {
+                    $user = new User();
+                    $user->email = $googleUser->email;
+                    $user->google_id = $googleUser->id;
+                    $user->uuid = \App\Utils\Helper::guid(true);
+                    $user->token = \App\Utils\Helper::guid();
+                    $user->remind_expire = admin_setting('default_remind_expire', 1);
+                    $user->remind_traffic = admin_setting('default_remind_traffic', 1);
+                    $this->registerService->handleTryOut($user);
+                    $user->save();
+                }
+            }
+
+            if ($user->banned) {
+                return response()->json([
+                    'message' => __('Your account has been suspended')
+                ], 400);
+            }
+
+            $user->last_login_at = time();
+            $user->save();
+
+            $authService = new AuthService($user);
+            return response()->json([
+                'data' => $authService->generateAuthData()
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => __('Google login failed: :error', ['error' => $e->getMessage()])
+            ], 400);
+        }
     }
 }

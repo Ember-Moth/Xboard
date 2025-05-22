@@ -13,6 +13,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  *
  * @property int $id 用户ID
  * @property string $email 邮箱
+ * @property string|null $google_id Google用户ID
  * @property string $password 密码
  * @property string|null $password_algo 加密方式
  * @property string|null $password_salt 加密盐
@@ -54,9 +55,39 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class User extends Authenticatable
 {
     use HasApiTokens;
+
     protected $table = 'v2_user';
     protected $dateFormat = 'U';
     protected $guarded = ['id'];
+    protected $fillable = [
+        'email',
+        'google_id',
+        'password',
+        'password_algo',
+        'password_salt',
+        'token',
+        'uuid',
+        'invite_user_id',
+        'plan_id',
+        'group_id',
+        'transfer_enable',
+        'speed_limit',
+        'u',
+        'd',
+        'banned',
+        'remind_expire',
+        'remind_traffic',
+        'expired_at',
+        'balance',
+        'commission_balance',
+        'commission_rate',
+        'device_limit',
+        'discount',
+        'last_login_at',
+        'parent_id',
+        'is_admin',
+        'commission_auto_check',
+    ];
     protected $casts = [
         'created_at' => 'timestamp',
         'updated_at' => 'timestamp',
@@ -71,7 +102,6 @@ class User extends Authenticatable
     public const COMMISSION_TYPE_SYSTEM = 0;
     public const COMMISSION_TYPE_PERIOD = 1;
     public const COMMISSION_TYPE_ONETIME = 2;
-
 
     // 获取邀请人信息
     public function invite_user(): BelongsTo

@@ -19,6 +19,9 @@ class PassportRoute
             $router->post('/auth/forget', [AuthController::class, 'forget']);
             $router->post('/auth/getQuickLoginUrl', [AuthController::class, 'getQuickLoginUrl']);
             $router->post('/auth/loginWithMailLink', [AuthController::class, 'loginWithMailLink']);
+            // Google 登录路由
+            $router->get('/auth/google', [AuthController::class, 'redirectToGoogle']);
+            $router->get('/auth/google/callback', [AuthController::class, 'handleGoogleCallback']);
             // Comm
             $router->post('/comm/sendEmailVerify', [CommController::class, 'sendEmailVerify']);
             $router->post('/comm/pv', [CommController::class, 'pv']);
